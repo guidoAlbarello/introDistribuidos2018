@@ -17,11 +17,23 @@ from collections import namedtuple
 import os
 
 ''' Add your imports here ... '''
-
+from pox.lib.util import dpid_to_str
+from pox.lib.revent import *
 ''' Add your global variables here ... '''
 
 log = core.getLogger()
 
+class ConnectionUp(Event):
+    def __init__(self,connection,ofp):
+        Event.__init__(self)
+        self.connection = connection
+        self.dpid = connection.dpid
+        self.ofp = ofp
+class ConnectionDown(Event):
+    def __init__(self,connection,ofp):
+        Event.__init__(self)
+        self.connection = connection
+        self.dpid = connection.dpid
 
 class Firewall(EventMixin):
 
@@ -31,33 +43,50 @@ class Firewall(EventMixin):
         log.info("Enabling Firewall Module")
 
     def _handle_ConnectionUp(self, event):
-        ''' Add your logic here ... '''
-        log.info("ConnectionUp event received")
+        ConnectionUp(event.connection, event.ofp)
+        log.info("Switch %s has come up.", dpid_to_str(event.dpid))
 
-    # def _handle_PacketIn(self, event):
-    #     tcpp = event.parsed.find('tcp')
-    #     if not tcpp : return
-    #     if tcpp.srcport == 80 or tcpp.dstport == 80:
-    #         event.halt = True
-    #         log.info("Packet Blocked")
+    def _handle_ConnectionDown(self, event):
+        ConnectionDown(event.connection, event.dpid)
+        log.info("Switch %s has shutdown.", dpid_to_str(event.dpid))
 
-    # def _handle_PacketIn(self, event):
-    #     udpp = event.parsed.find('udp')
-    #     if not udpp : return
-    #     if ((udpp.dstport == 5001) and  (str(mac) == "00:00:00:00:00:02")):
-    #         event.halt = True
-    #         log.info("Packet Blocked")
+    def block_protocol_port(self, event):
+        protocol = 'tcp'
+        port = 80
+        tcpp = event.parsed.find(protocol)
+        if not tcpp : return
+        if tcpp.srcport == port or tcpp.dstport == port:
+            event.halt = True
+            log.info("Packet Blocked by Block Protocol " + protocol + " and port " + str(port))
+
+    def block_mac_protocol_and_port(self, event):
+        protocol = 'udp'
+        port = 5001
+        blocked_mac = "00:00:00:00:00:02"
+        udpp = event.parsed.find('udp')
+        if not udpp : return
+        mac = event.parsed.src
+        if ((udpp.dstport == 5001) and  (str(mac) == blocked_mac)):
+            event.halt = True
+            log.info("Packet Blocked by Block Src Mac: " + blocked_mac+ " protocol: " + protocol + " and port: " + str(port))
 
     def _handle_PacketIn(self, event):
+
+        self.block_protocol_port(event)
+        self.block_communication_between_two_hosts(event)
+        self.block_mac_protocol_and_port(event)
+
+    def block_communication_between_two_hosts(self, event):
         tcpp = event.parsed.find('ipv4')
-        if not tcpp : return
+        if not tcpp: return
         a = "10.0.0.2"
         b = "10.0.0.3"
         src = str(tcpp.srcip)
         dst = str(tcpp.dstip)
-        if (src == a and dst == b ) or (src == b and dst == a):
+        if ( (src == a or src == b) and (dst == b or dst == a) ):
             event.halt = True
-            log.info("Packet Blocked")
+            log.info("Evento capturado en SWITCH: " + dpid_to_str(event.dpid))
+            log.info("Packet Blocked by Block communication between two hosts. with ips: " + a + " and " + b)
 
 def launch():
     '''
